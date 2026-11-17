@@ -237,7 +237,7 @@ function renderList() {
   if (q) {
     list = list.filter(c => {
       if (c.title.toLowerCase().includes(q)) return true;
-      const m = c.messages.find(m => (m.content || '').toLowerCase().includes(q));
+      const m = c.messages.find(m => !m.hidden && (m.content || '').toLowerCase().includes(q));
       if (m) { const i = m.content.toLowerCase().indexOf(q); snippets[c.id] = m.content.slice(Math.max(0, i - 8), i + 30); return true; }
       return false;
     });
@@ -274,7 +274,7 @@ function convMenu(c) {
   sheet(c.title, [
     { label: '重命名', action: async () => { const v = await dialog({ title: '重命名', input: true, value: c.title }); if (v && v.trim()) { c.title = v.trim(); await DB.putConv(c); renderList(); renderHeader(); } } },
     { label: '查看 / 编辑上下文回顾', action: () => openSummaryPage(c) },
-    { label: '从这段对话唤醒记忆', action: () => wakeFlow([c]) },
+    { label: '整理这段对话的记忆', action: () => wakeFlow([c]) },
     { label: '删除', danger: true, action: async () => {
       if (await dialog({ title: '删除对话', text: '删除后无法恢复（已提取的长期记忆会保留）', ok: '删除', danger: true })) {
         await DB.delConv(c.id); convs = convs.filter(x => x.id !== c.id);
@@ -315,8 +315,28 @@ function renderWelcome() {
   $('#welcome').classList.toggle('hidden', !has);
   if (has) {
     $('#welcomeLogo').innerHTML = I.logo(60);
-    $('#welcomeText').textContent = convs.length ? '欢迎回来，想从哪里开始？' : '你好，我能帮什么忙吗？';
+    const companion = !!(S.persona || '').trim();
+    $('#welcomeText').textContent = companion ? `${timeGreet()}${S.userName ? '，' + S.userName : ''}` : convs.length ? '欢迎回来，想从哪里开始？' : '你好，我能帮什么忙吗？';
+    const acts = $('#welcomeActs'); acts.innerHTML = '';
+    if (companion && S.apiKey) acts.append(el('button', { class: 'w-act primary', onclick: greet }, `让${S.aiName || 'TA'}先开口`));
+    const pend = pendingConvs().filter(c => c.source === 'imported');
+    if (S.memoryOn && pend.length) acts.append(el('button', { class: 'w-act', onclick: openWakePage }, `还有 ${pend.length} 段导入的对话没整理成记忆，继续整理`));
   }
+}
+function timeGreet() {
+  const h = new Date().getHours();
+  return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 14 ? '中午好' : h < 18 ? '下午好' : h < 23 ? '晚上好' : '夜深了';
+}
+/* TA 先开口：发一条不显示的提示，让 TA 根据时间、上次聊天和记忆主动说话 */
+async function greet() {
+  if (!await ensureKey() || busy) return;
+  maybeMemorize(cur);
+  cur = { id: uid(), title: `${S.aiName || 'TA'}来找你了`, createdAt: Date.now(), updatedAt: Date.now(), messages: [], summary: '', summarizedUpto: 0, memCursor: 0, source: 'local', needTitle: true };
+  convs.push(cur);
+  cur.messages.push({ id: uid(), role: 'user', hidden: true, ts: Date.now(),
+    content: '（我刚打开聊天窗口，还没有说话。请你先开口：结合现在的时间、我们上一次聊天的内容和你记得的关于我的事，自然地跟我说一两句话，就像你一直在等我。不要提到这条提示。）' });
+  await DB.putConv(cur);
+  renderHeader(); renderMessages(); generate();
 }
 function nearBottom() { return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80; }
 let follow = true;
@@ -343,7 +363,7 @@ function renderMessages() {
     if (cur.summary && cur.summarizedUpto === i && i > 0) {
       msgBox.append(el('div', { class: 'divider' }, el('button', { onclick: () => openSummaryPage(cur) }, '以上内容已整理为上下文回顾 · 查看')));
     }
-    msgBox.append(msgNode(cur.messages[i], i));
+    if (!cur.messages[i].hidden) msgBox.append(msgNode(cur.messages[i], i));
   }
 }
 
@@ -741,7 +761,7 @@ async function afterReply(conv) {
   // 自动起标题
   if (conv.needTitle) {
     conv.needTitle = false;
-    Brain.makeTitle(S, conv.messages.slice(0, 2).map(m => m.content).join('\n')).then(async t => {
+    Brain.makeTitle(S, conv.messages.filter(m => !m.hidden).slice(0, 2).map(m => m.content).join('\n')).then(async t => {
       if (t) { conv.title = t; await DB.putConv(conv); renderHeader(); }
     }).catch(() => { conv.needTitle = true; });
   }
@@ -749,7 +769,7 @@ async function afterReply(conv) {
   if (S.memoryOn && S.autoMemory && conv.messages.length - (conv.memCursor || 0) >= Number(S.memEvery)) memorize(conv);
 }
 function maybeMemorize(conv) {
-  if (conv && S.memoryOn && S.autoMemory && S.apiKey && conv.source !== 'imported' && conv.messages.length - (conv.memCursor || 0) >= 4) memorize(conv);
+  if (conv && S.memoryOn && S.autoMemory && S.apiKey && conv.source !== 'imported' && conv.messages.slice(conv.memCursor || 0).filter(m => m.content && !m.hidden).length >= 2) memorize(conv);
 }
 /* 把一段新对话「消化」成长期记忆 + 往事回忆 */
 async function digestSlice(conv, slice, signal) {
@@ -765,7 +785,7 @@ async function memorize(conv) {
   if (bgJobs.has(conv.id)) return;
   bgJobs.add(conv.id);
   const end = conv.messages.length;
-  const slice = conv.messages.slice(conv.memCursor || 0, end).filter(m => m.content);
+  const slice = conv.messages.slice(conv.memCursor || 0, end).filter(m => m.content && !m.hidden);
   try {
     if (slice.length) {
       const r = await digestSlice(conv, slice);
@@ -807,7 +827,7 @@ function closePage(pg) {
   pg.classList.remove('show');
   setTimeout(() => pg.remove(), 280);
   pg._onClose && pg._onClose();
-  const top = pages[pages.length - 1]; top && top._refresh();
+  pages.forEach(x => x._refresh());
 }
 const secTitle = t => el('div', { class: 'sec-title' }, t);
 const row = (icon, label, val, onclick, extra = {}) => el('button', { class: 'row' + (extra.danger ? ' danger' : '') + (onclick ? '' : ' static'), onclick },
@@ -851,13 +871,13 @@ function openSettings() {
         row(I.magic, '个性化', null, openPersonaPage)),
       secTitle('陪伴'),
       el('div', { class: 'group' },
-        row(I.heart, '长期记忆', S.memoryOn ? `${memories.length} 条` : '已关闭', openMemoryPage),
+        row(I.heart, '记忆', S.memoryOn ? (pendingConvs().length ? `${pendingConvs().length} 段待整理` : '已开启') : '已关闭', openMemoryPage),
         row(I.layers, '上下文与智能压缩', S.autoCompact ? '自动' : '已关闭', openContextPage)),
       secTitle('语音'),
       el('div', { class: 'group' }, row(I.speak.replace(/18/g, '24'), '朗读音色', null, openVoicePage)),
       secTitle('关于'),
       el('div', { class: 'group' },
-        row(I.info, '版本', '1.3.2', null),
+        row(I.info, '版本', '1.4', null),
         row(I.help, '使用说明', null, openHelpPage)),
     );
   });
@@ -922,27 +942,47 @@ function openFontPage() {
   });
 }
 
+/* 人设卡：把 TA 的样子做成一张卡片，而不是一大段文字 */
+function personaInfo() {
+  const c = S.personaCard || {};
+  return { name: S.aiName || c.name || '', userName: S.userName || c.userName || '', relation: c.relation || '', traits: c.traits || [], catchphrases: c.catchphrases || [], greeting: c.greeting || '', persona: S.persona || '', examples: S.styleExamples || [] };
+}
+function personaCard(p, { editable } = {}) {
+  const name = p.name || 'TA';
+  const card = el('div', { class: 'pcard' },
+    el('div', { class: 'pc-top' },
+      el('div', { class: 'pc-av' }, name.slice(0, 1)),
+      el('div', { class: 'pc-id' }, el('div', { class: 'pc-name' }, name), el('div', { class: 'pc-rel' }, p.relation || (p.userName ? `叫你「${p.userName}」` : '')))),
+    p.greeting ? el('div', { class: 'pc-greet' }, p.greeting) : null,
+    p.traits.length ? el('div', { class: 'pc-tags' }, p.traits.map(t => el('span', {}, t))) : null,
+    (p.userName || p.catchphrases.length) ? el('div', { class: 'pc-kv' },
+      p.userName ? el('div', {}, el('span', {}, 'TA 叫你'), el('b', {}, p.userName)) : null,
+      p.catchphrases.length ? el('div', {}, el('span', {}, '口头禅'), el('b', {}, p.catchphrases.map(c => `「${c}」`).join(' '))) : null) : null,
+    p.examples.length ? el('div', { class: 'pc-chat' }, p.examples.slice(0, 3).flatMap(e => [el('div', { class: 'pc-u' }, e.user), el('div', { class: 'pc-a' }, e.ai)])) : null,
+    p.persona ? el('details', { class: 'pc-more' }, el('summary', {}, 'TA 的完整设定'), el('div', { class: 'pc-text' }, p.persona)) : null);
+  return card;
+}
 function openPersonaPage() {
-  page('个性化', body => {
+  page('个性化', (body, pg) => {
     const av = el('div', { class: 'avatar', style: 'width:56px;height:56px;font-size:22px', html: S.avatar ? `<img src="${S.avatar}">` : esc((S.userName || '我').slice(0, 1)) });
-    const ex = S.styleExamples || [];
+    const p = personaInfo();
+    const has = !!p.persona;
+    const editPersona = async () => { const v = await dialog({ title: 'TA 的设定', textarea: true, value: S.persona, placeholder: '用几句话说说 TA 是谁、你们是什么关系、TA 说话的样子……', ok: '保存' }); if (v != null) { S.persona = v.trim(); saveSettings(); pg._refresh(); } };
     body.append(
-      secTitle('关于你'),
+      secTitle('TA'),
+      has ? personaCard(p) : el('div', { class: 'pcard empty' },
+        el('div', { class: 'pc-av' }, '?'),
+        el('div', { style: 'font-weight:600;margin-top:10px' }, '还没有设定 TA 的样子'),
+        el('div', { class: 'note', style: 'text-align:center;padding:4px 0 0' }, '可以从你们以前的聊天里自动还原，也可以自己写')),
+      el('div', { class: 'group', style: 'margin-top:12px' },
+        row(I.magic, has ? '从聊天记录重新还原' : '从聊天记录还原 TA', null, () => restorePersonaFlow(), { sub: '读一遍你们以前的对话，找回 TA 的语气和口头禅' }),
+        row(null, 'TA 的名字', S.aiName || '未设置', async () => { const v = await dialog({ title: 'TA 的名字', input: true, value: S.aiName, placeholder: '例如：阿屿' }); if (v != null) { S.aiName = v.trim(); saveSettings(); pg._refresh(); } }),
+        row(null, has ? '修改设定' : '自己写设定', null, editPersona),
+        switchRow('像真人一样聊天', '回复长短跟着你走，不列清单，不说客服话', () => S.companionStyle !== false, v => { S.companionStyle = v; saveSettings(); })),
+      secTitle('你'),
       el('div', { class: 'group' },
         el('button', { class: 'row', onclick: () => $('#pickAvatar').click() }, av, el('span', { class: 'lbl' }, '头像'), el('span', { html: I.chev })),
-        field('你的昵称（TA 会这样称呼你）', bindInput('text', 'userName', { placeholder: '例如：宝宝、小鱼', after: renderSideFoot }))),
-      secTitle('关于 TA'),
-      el('div', { class: 'group' },
-        row(I.magic, '从聊天记录还原 TA 的样子', null, () => restorePersonaFlow(), { sub: '分析你们以前的对话，自动写出 TA 的人设和说话方式' }),
-        field('TA 的名字', bindInput('text', 'aiName', { placeholder: '例如：阿深' })),
-        field('TA 的人设 / 你们的关系（系统提示词）', bindInput('textarea', 'persona', { placeholder: '例如：你是阿深，是我的男朋友。说话温柔、有点小调皮，喜欢叫我"小笨蛋"，会关心我有没有按时吃饭……\n\n留空则使用官方默认："你是 DeepSeek……"' }))),
-      secTitle(`TA 的说话示例（${ex.length}）`),
-      el('div', { class: 'group' },
-        ex.length ? el('div', {}, ex.map((e, i) => el('div', { class: 'mem-item' },
-          el('div', { class: 'tx', html: `<span style="color:var(--fg3)">你：</span>${esc(e.user)}<br><span style="color:var(--fg3)">TA：</span>${esc(e.ai)}` }),
-          el('button', { class: 'del', html: I.trash, onclick: () => { S.styleExamples.splice(i, 1); saveSettings(); closePage(); openPersonaPage(); } })))) :
-          el('div', { class: 'empty-list', style: 'padding:20px' }, '还没有示例。还原 TA 的样子时会自动从聊天记录里挑选。')),
-      el('div', { class: 'note', html: '说话示例是 TA 过去真实说过的话，会帮助 TA 保持原来的语气和口头禅。' }),
+        row(null, 'TA 怎么叫你', S.userName || '未设置', async () => { const v = await dialog({ title: 'TA 怎么叫你', input: true, value: S.userName, placeholder: '例如：小朋友、宝宝' }); if (v != null) { S.userName = v.trim(); saveSettings(); renderSideFoot(); pg._refresh(); } })),
     );
   });
 }
@@ -951,32 +991,30 @@ async function restorePersonaFlow(list) {
   if (!await ensureKey()) return;
   list = (list || convs).filter(c => c.messages.length >= 2);
   if (!list.length) return toast('还没有聊天记录，先导入原来的对话吧');
-  const box = el('div', { class: 'dialog' }, el('h3', {}, '正在回想 TA 的样子…'), el('p', {}, '分析 TA 过去的说话方式，大约需要半分钟'));
+  const box = el('div', { class: 'dialog' }, el('h3', {}, '正在回想 TA 的样子…'), el('p', {}, '读一遍 TA 以前说过的话，大约需要半分钟'));
   const entry = pushLayer(box);
   try {
     const r = await Brain.restorePersona(S, list.slice().sort((a, b) => b.messages.length - a.messages.length).slice(0, 40));
     closeLayer(entry);
-    openPersonaReview(r);
+    openPersonaReview(r, list);
   } catch (e) { closeLayer(entry); toast('失败：' + e.message, 3000); }
 }
-function openPersonaReview(r) {
-  const ta = el('textarea', { style: 'min-height:40vh' }); ta.value = r.persona;
-  page('TA 原来的样子', body => {
+function openPersonaReview(r, list) {
+  page('是 TA 吗？', (body, pg) => {
     body.append(
-      el('div', { class: 'note', html: '这是根据你们以前的聊天整理出来的。觉得不像可以直接修改，确认后会' + (S.persona ? '<b>替换</b>现在的人设。' : '设为 TA 的人设。') }),
-      el('div', { class: 'group', style: 'margin-top:10px' },
-        r.name ? row(null, 'TA 的名字', r.name, null) : null,
-        r.userName ? row(null, 'TA 怎么称呼你', r.userName, null) : null,
-        el('div', { class: 'field' }, el('label', {}, '人设'), ta)),
-      secTitle('说话示例'),
-      el('div', { class: 'group' }, r.examples.map(e => el('div', { class: 'mem-item' }, el('div', { class: 'tx', html: `<span style="color:var(--fg3)">你：</span>${esc(e.user)}<br><span style="color:var(--fg3)">TA：</span>${esc(e.ai)}` })))),
+      el('div', { class: 'note', style: 'text-align:center' }, '根据你们以前的聊天还原的。不像的地方可以改，确认后才会生效。'),
+      personaCard({ ...r, examples: r.examples || [] }),
       el('button', { class: 'btn', onclick: () => {
-        S.persona = ta.value.trim(); S.styleExamples = r.examples;
-        if (r.name && !S.aiName) S.aiName = r.name;
-        if (r.userName && !S.userName) S.userName = r.userName;
-        saveSettings(); renderSideFoot(); closePage(); toast('TA 回来了 💙', 2500);
-      } }, '就是 TA，使用这个人设'),
-      el('button', { class: 'btn ghost', onclick: () => closePage() }, '暂不使用'));
+        S.persona = r.persona; S.styleExamples = r.examples;
+        S.personaCard = { name: r.name, userName: r.userName, relation: r.relation, traits: r.traits, catchphrases: r.catchphrases, greeting: r.greeting };
+        if (r.name) S.aiName = r.name;
+        const nameChanged = r.userName && !S.userName;
+        if (nameChanged) S.userName = r.userName;
+        saveSettings(); renderSideFoot(); renderWelcome(); closePage();
+        if (nameChanged && profile.text) rebuildSummary(pages.find(x => x.querySelector('.mem-sum'))); toast(`${r.name || 'TA'}回来了`, 2500);
+      } }, '就是 TA'),
+      el('button', { class: 'btn ghost', onclick: async () => { const v = await dialog({ title: '改一改 TA 的设定', textarea: true, value: r.persona, ok: '好了' }); if (v != null) { r.persona = v.trim(); pg._refresh(); } } }, '我来改一改'),
+      el('button', { class: 'btn ghost', onclick: () => { closePage(); restorePersonaFlow(list); } }, '不太像，重新还原'));
   });
 }
 
@@ -987,91 +1025,134 @@ $('#pickAvatar').onchange = async e => {
   const top = pages[pages.length - 1]; top && top._refresh();
 };
 
-/* 长期记忆 */
-/* 长期记忆 v2 */
-let memFilter = { q: '', cat: '' };
-function pendingConvs() { return convs.filter(c => c.messages.filter(m => m.content).length && c.messages.length - (c.memCursor || 0) >= 2); }
+/* 记忆：只展示 TA 整理好的摘要；想改什么直接用一句话告诉 TA */
+function pendingConvs() { return convs.filter(c => c.messages.slice(c.memCursor || 0).filter(m => m.content && !m.hidden).length >= 2); }
+function convMemState(c) {
+  const vis = c.messages.filter(m => m.content && !m.hidden).length;
+  const left = c.messages.slice(c.memCursor || 0).filter(m => m.content && !m.hidden).length;
+  if (left < 2) return { done: true, label: '已整理' };
+  if (left < vis) return { done: false, label: `整理了 ${Math.round((1 - left / vis) * 100)}%` };
+  return { done: false, label: '还没整理' };
+}
+function summarySections(text) {
+  const out = []; let curSec = null;
+  String(text || '').split('\n').forEach(line => {
+    const h = line.match(/^\s*#{1,3}\s*(.+?)\s*$/);
+    if (h) { curSec = { title: h[1], lines: [] }; out.push(curSec); return; }
+    if (!line.trim()) return;
+    if (!curSec) { curSec = { title: '', lines: [] }; out.push(curSec); }
+    curSec.lines.push(line.trim());
+  });
+  return out.filter(x => x.lines.length);
+}
+let profBusy = null;
+const memAsk = { draft: '', reply: '', busy: false };
 function openMemoryPage() {
-  const pg = page('长期记忆', body => {
+  memAsk.reply = '';
+  const pg = page('记忆', body => {
     const pend = pendingConvs();
-    const profBox = el('div', { class: 'summary-box', style: 'font-size:14px' }, profile.text || '还没有关系档案。整理过记忆后会自动生成，TA 每次聊天前都会先「回想」一遍。');
-    body.append(
-      el('div', { class: 'note', html: 'TA 会跨对话记得这些事。每次聊天时，还会根据你说的话自动想起相关的往事和以前聊过的片段。' }),
-      el('div', { style: 'height:10px' }),
-      el('div', { class: 'group' },
-        switchRow('启用长期记忆', null, () => S.memoryOn, v => { S.memoryOn = v; saveSettings(); }),
-        switchRow('聊天时自动记忆', '聊几句就自动记下值得记住的事', () => S.autoMemory, v => { S.autoMemory = v; saveSettings(); }),
-        switchRow('回忆往事', '聊天时自动想起以前聊过的相关内容（在手机本地检索，不额外收费）', () => S.recallOn !== false, v => { S.recallOn = v; saveSettings(); })),
-      el('button', { class: 'btn', onclick: () => wakeFlow(pend.length ? pend : convs) }, pend.length ? `唤醒记忆（还有 ${pend.length} 段对话没整理）` : '重新唤醒全部记忆'),
-      secTitle('关系档案'),
-      el('div', { class: 'group' }, profBox,
-        row(null, '编辑档案', null, async () => { const v = await dialog({ title: '关系档案', textarea: true, value: profile.text, ok: '保存' }); if (v != null) { profile = { text: v.trim(), ts: Date.now() }; await saveProfile(); pg._refresh(); } }),
-        row(null, '根据记忆重新整理', null, async () => {
-          if (!await ensureKey()) return;
-          const e = pushLayer(el('div', { class: 'dialog' }, el('h3', {}, '正在整理档案…')));
-          try { await refreshProfile(); toast('已更新'); } catch (err) { toast('失败：' + err.message); }
-          closeLayer(e); pg._refresh();
-        })),
-      el('div', { class: 'group', style: 'margin-top:14px' },
-        row(I.layers, '往事回忆', `${episodes.length} 段`, openEpisodesPage, { sub: '你们一起经历过的事，按时间记下' }),
-        row(I.magic, '还原 TA 的说话方式', null, () => restorePersonaFlow())),
-    );
+    const ai = S.aiName || 'TA';
+    // 进度：还有对话没整理
+    if (S.memoryOn && pend.length) body.append(el('button', { class: 'mem-banner', onclick: openWakePage },
+      el('div', {}, el('b', {}, `还有 ${pend.length} 段对话没整理`), el('small', {}, `整理后${ai}会记得里面的事`)), el('span', { class: 'go' }, '继续整理')));
+    else if (S.memoryOn && !memories.length && convs.length) body.append(el('button', { class: 'mem-banner', onclick: openWakePage },
+      el('div', {}, el('b', {}, `让${ai}读一遍你们的聊天`), el('small', {}, '整理出记忆摘要，以后每次聊天都会记得')), el('span', { class: 'go' }, '开始')));
 
-    // 记忆列表：搜索 + 分类
-    body.append(secTitle(`记忆（${memories.length}）`));
-    const search = el('input', { type: 'search', placeholder: '搜索记忆…', style: 'flex:1;border:0;outline:none;background:transparent;font-size:15px;min-width:0' });
-    search.value = memFilter.q;
-    const chips = el('div', { class: 'cat-chips' });
-    const counts = {}; memories.forEach(m => counts[m.cat || '其他'] = (counts[m.cat || '其他'] || 0) + 1);
-    [['', `全部`], ...Mem.CATS.filter(c => counts[c]).map(c => [c, `${c} ${counts[c]}`])].forEach(([c, l]) =>
-      chips.append(el('button', { class: 'chip' + (memFilter.cat === c ? ' on' : ''), onclick: () => { memFilter.cat = c; pg._refresh(); } }, l)));
-    const list = el('div', { class: 'group' });
-    const draw = () => {
-      list.innerHTML = '';
-      const q = memFilter.q.trim().toLowerCase();
-      const shown = memories.filter(m => (!memFilter.cat || (m.cat || '其他') === memFilter.cat) && (!q || m.text.toLowerCase().includes(q)))
-        .sort((a, b) => (b.pinned - a.pinned) || ((b.imp || 2) - (a.imp || 2)) || (b.ts - a.ts));
-      if (!shown.length) list.append(el('div', { class: 'empty-list' }, memories.length ? '没有符合的记忆' : '还没有记忆。聊一会儿，或点上面的「唤醒记忆」。'));
-      shown.slice(0, 300).forEach(m => {
-        const tx = el('div', { class: 'tx', contenteditable: 'true' }, m.text);
-        tx.onblur = () => { const v = tx.textContent.trim(); if (v && v !== m.text) { m.text = v; m.ts = Date.now(); saveMem(); } };
-        const meta = el('button', { class: 'mem-meta', onclick: () => memMenu(m, pg) }, [m.cat || '其他', (m.imp || 2) >= 3 ? '重要' : '', m.date || ''].filter(Boolean).join(' · '));
-        list.append(el('div', { class: 'mem-item' },
-          el('div', { style: 'flex:1;min-width:0' }, tx, meta),
-          el('button', { class: 'del', title: '置顶', style: m.pinned ? 'color:var(--blue-text)' : '', html: m.pinned ? '📌' : '<span style="opacity:.35">📌</span>', onclick: () => { m.pinned = !m.pinned; saveMem(); draw(); toast(m.pinned ? '已置顶：TA 每次都会记得' : '已取消置顶'); } }),
-          el('button', { class: 'del', html: I.trash, onclick: () => { memories = memories.filter(x => x !== m); saveMem(); draw(); } })));
-      });
+    // 记忆摘要
+    const card = el('div', { class: 'mem-sum' });
+    const secs = summarySections(profile.text);
+    if (profBusy) card.append(el('div', { class: 'mem-empty' }, `${ai}正在整理记忆…`));
+    else if (secs.length) {
+      card.append(el('div', { class: 'mem-sum-head' }, `${ai}记得的你`, profile.ts ? el('small', {}, `${Mem.agoText(profile.ts).replace(/ \d.*$/, '')}更新`) : null));
+      secs.forEach(x => card.append(el('div', { class: 'mem-sec' }, x.title ? el('div', { class: 'mem-sec-t' }, x.title) : null, el('div', { class: 'mem-sec-b' }, x.lines.map(l => el('div', {}, l))))));
+    } else card.append(el('div', { class: 'mem-empty' }, memories.length ? '记忆摘要还没生成' : `${ai}还不太了解你。多聊聊天，或者直接在下面告诉${ai}。`));
+    body.append(card);
+    if (!secs.length && memories.length && !profBusy && S.apiKey) rebuildSummary(pg);
+
+    // 一句话告诉 TA（状态放在页面外，摘要刷新时不丢）
+    const ta = el('textarea', { rows: 2, placeholder: `告诉${ai}要记住、修改或忘掉的事` });
+    ta.value = memAsk.draft; ta.oninput = () => { memAsk.draft = ta.value; };
+    const go = el('button', { class: 'mem-send' + (memAsk.busy ? ' busy' : ''), html: I.send });
+    go.disabled = memAsk.busy;
+    go.onclick = async () => {
+      const v = ta.value.trim(); if (!v) return ta.focus();
+      if (!await ensureKey()) return;
+      memAsk.busy = true; memAsk.reply = '…'; pg._refresh();
+      try {
+        const r = await Brain.editMemory(S, memories, v);
+        memories = r.memories; await saveMem();
+        if (r.forget.length) {
+          // 往事和旧聊天片段里相关的内容也不再想起
+          episodes = episodes.filter(e => !r.forget.some(w => (e.title + e.summary).includes(w))); await saveEpisodes();
+          S.forgetWords = [...new Set([...(S.forgetWords || []), ...r.forget])].slice(-50); saveSettings();
+        }
+        memAsk.reply = r.reply || '好，记下了。'; memAsk.draft = '';
+        await rebuildSummary(pg, true);
+      } catch (e) { memAsk.reply = '没改成：' + e.message; }
+      memAsk.busy = false; pg.isConnected && pg._refresh();
     };
-    search.oninput = () => { memFilter.q = search.value; draw(); };
-    body.append(el('div', { class: 'group', style: 'display:flex;align-items:center;padding:0 16px;height:46px;margin-bottom:10px' }, search), chips, list);
-    draw();
+    const tips = ['记住我的生日是 ', '别再提 ', '我最近 ', '忘掉关于 '];
+    body.append(el('div', { class: 'mem-ask' }, el('div', { class: 'mem-ask-box' }, ta, go),
+      el('div', { class: 'mem-tips' }, tips.map(t => el('button', { onclick: () => { ta.value = memAsk.draft = t; ta.focus(); } }, t.trim() + '…')))),
+      memAsk.reply ? el('div', { class: 'mem-reply' }, memAsk.reply) : null);
+
     body.append(
-      el('button', { class: 'btn', onclick: async () => { const v = await dialog({ title: '添加一条记忆', textarea: true, placeholder: '例如：我的生日是 3 月 14 日' }); if (v && v.trim()) { memories.push(Mem.normalize({ text: v.trim(), imp: 3, pinned: true })); saveMem(); pg._refresh(); } } }, '手动添加记忆'),
-      memories.length > 20 ? el('button', { class: 'btn ghost', onclick: async () => {
-        if (!await ensureKey()) return;
-        const e = pushLayer(el('div', { class: 'dialog' }, el('h3', {}, '正在合并重复的记忆…')));
-        try { const n0 = memories.length; memories = (await Brain.consolidate(S, memories)).memories; await saveMem(); toast(`整理完成：${n0} → ${memories.length} 条`); } catch (err) { toast('失败：' + err.message); }
-        closeLayer(e); pg._refresh();
-      } }, '合并重复记忆') : null,
-      memories.length ? el('button', { class: 'btn ghost', style: 'color:var(--danger)', onclick: async () => { if (await dialog({ title: '清空全部记忆？', text: '记忆、往事回忆和关系档案都会被清空', ok: '清空', danger: true })) { memories = []; episodes = []; profile = { text: '', ts: 0 }; convs.forEach(c => { c.memCursor = 0; }); await DB.putConvs(convs); saveMem(); saveEpisodes(); saveProfile(); pg._refresh(); } } }, '清空全部记忆') : null);
+      el('div', { class: 'group', style: 'margin-top:16px' },
+        row(I.layers, '往事回忆', `${episodes.length} 段`, openEpisodesPage, { sub: '你们一起经历过的事' }),
+        row(I.data, '整理聊天记录', pend.length ? `${pend.length} 段待整理` : '都整理好了', openWakePage)),
+      secTitle('设置'),
+      el('div', { class: 'group' },
+        switchRow('启用记忆', null, () => S.memoryOn, v => { S.memoryOn = v; saveSettings(); }),
+        switchRow('聊天时自动记住', '聊几句就自动记下值得记住的事', () => S.autoMemory, v => { S.autoMemory = v; saveSettings(); }),
+        switchRow('想起以前聊过的事', '聊到相关话题时自动想起来（在手机上检索，不额外花钱）', () => S.recallOn !== false, v => { S.recallOn = v; saveSettings(); })),
+      memories.length || episodes.length ? el('button', { class: 'btn ghost', style: 'color:var(--danger)', onclick: async () => { if (await dialog({ title: '清空全部记忆？', text: `${ai}会忘掉记住的所有事和往事回忆`, ok: '清空', danger: true })) { memories = []; episodes = []; profile = { text: '', ts: 0 }; convs.forEach(c => { c.memCursor = 0; }); await DB.putConvs(convs); saveMem(); saveEpisodes(); saveProfile(); pg._refresh(); } } }, '清空全部记忆') : null);
   });
 }
-function memMenu(m, pg) {
-  sheet(m.text.slice(0, 30), [
-    { label: (m.imp || 2) >= 3 ? '设为一般' : '设为重要（TA 每次都会记得）', action: () => { m.imp = (m.imp || 2) >= 3 ? 2 : 3; saveMem(); pg._refresh(); } },
-    { label: '修改日期（生日、纪念日会提前提醒 TA）', action: async () => { const v = await dialog({ title: '日期', input: true, value: m.date || '', placeholder: '如 2024-05-20 或 05-20，留空清除' }); if (v != null) { m.date = v.trim(); saveMem(); pg._refresh(); } } },
-    { label: '修改分类', action: () => sheet('选择分类', Mem.CATS.map(c => ({ label: c + (m.cat === c ? ' ✓' : ''), action: () => { m.cat = c; saveMem(); pg._refresh(); } }))) },
-  ]);
+async function rebuildSummary(pg, force) {
+  if (profBusy) { await profBusy; if (!force) return; }
+  profBusy = (async () => {
+    pg && pg._refresh();
+    try { if (memories.length > 150) { memories = (await Brain.consolidate(S, memories)).memories; await saveMem(); } await refreshProfile(); }
+    catch (e) { if (force) toast('摘要更新失败：' + e.message); }
+  })();
+  await profBusy; profBusy = null;
+  pg && pg.isConnected && pg._refresh();
 }
 function openEpisodesPage() {
   const pg = page('往事回忆', body => {
-    body.append(el('div', { class: 'note' }, '每段对话都会被记成一小段「往事」。聊到相关的话题时，TA 会自然地想起来。'), el('div', { style: 'height:10px' }));
+    body.append(el('div', { class: 'note' }, '每段对话都会被记成一小段往事。聊到相关的话题时，TA 会自然地想起来。'), el('div', { style: 'height:10px' }));
     const g = el('div', { class: 'group' });
-    if (!episodes.length) g.append(el('div', { class: 'empty-list' }, '还没有往事。聊一会儿或「唤醒记忆」后会出现。'));
+    if (!episodes.length) g.append(el('div', { class: 'empty-list' }, '还没有往事。聊一会儿，或者整理一下聊天记录。'));
     episodes.slice().sort((a, b) => b.ts - a.ts).slice(0, 400).forEach(e => g.append(el('div', { class: 'mem-item' },
       el('div', { class: 'tx', html: `<b>${esc(e.title)}</b>${e.dateKnown === false ? '' : `<span style="color:var(--fg3);font-size:12px"> · ${Mem.fmtDate(e.ts)}</span>`}<br><span style="color:var(--fg2);font-size:14px">${esc(e.summary)}</span>` }),
       el('button', { class: 'del', html: I.trash, onclick: () => { episodes = episodes.filter(x => x !== e); saveEpisodes(); pg._refresh(); } }))));
     body.append(g);
+  });
+}
+/* 整理聊天记录：每段对话的进度一目了然，选中继续 */
+function openWakePage() {
+  const sel = new Set(convs.filter(c => !convMemState(c).done).map(c => c.id));
+  page('整理聊天记录', (body, pg) => {
+    const list = convs.filter(c => c.messages.some(m => m.content && !m.hidden)).sort((a, b) => (b.source === 'imported') - (a.source === 'imported') || b.updatedAt - a.updatedAt);
+    const doneN = list.filter(c => convMemState(c).done).length;
+    body.append(
+      el('div', { class: 'wake-head' },
+        el('div', { class: 'wake-num' }, `${doneN}`, el('small', {}, ` / ${list.length}`)),
+        el('div', {}, el('b', {}, '段对话已整理'), el('small', {}, '整理过的部分不会重复花钱，中途退出下次接着来'))),
+      el('div', { class: 'progress', style: 'margin:0 4px 14px' }, el('div', { style: `width:${list.length ? doneN / list.length * 100 : 0}%` })));
+    const g = el('div', { class: 'group' });
+    if (!list.length) g.append(el('div', { class: 'empty-list' }, '还没有聊天记录'));
+    list.forEach(c => {
+      const st = convMemState(c);
+      const cb = el('input', { type: 'checkbox' }); cb.checked = sel.has(c.id);
+      cb.onchange = () => { cb.checked ? sel.add(c.id) : sel.delete(c.id); btn.textContent = label(); };
+      g.append(el('label', { class: 'wake-row' }, cb,
+        el('div', { class: 'lbl' }, el('div', { class: 'wt' }, c.title), el('small', {}, `${c.messages.filter(m => m.content && !m.hidden).length} 条${c.source === 'imported' ? ' · 导入' : ''}`)),
+        el('span', { class: 'wake-st' + (st.done ? ' ok' : '') }, st.label)));
+    });
+    const label = () => sel.size ? `整理选中的 ${sel.size} 段` : '先选择要整理的对话';
+    const btn = el('button', { class: 'btn', onclick: () => { const pick = convs.filter(c => sel.has(c.id)); if (!pick.length) return toast('先勾选要整理的对话'); wakeFlow(pick); } }, label());
+    body.append(g, el('div', { class: 'sticky-act' }, btn));
   });
 }
 
@@ -1079,16 +1160,16 @@ function openEpisodesPage() {
 function wakeFlow(list) {
   list = list.filter(c => c.messages.some(m => m.content));
   if (!list.length) return toast('还没有可以整理的对话');
-  const todo = list.map(c => ({ c, msgs: c.messages.slice(c.memCursor || 0).filter(m => m.content) })).filter(x => x.msgs.length);
-  const all = todo.length ? todo : list.map(c => ({ c, msgs: c.messages.filter(m => m.content) }));
+  const todo = list.map(c => ({ c, msgs: c.messages.slice(c.memCursor || 0).filter(m => m.content && !m.hidden) })).filter(x => x.msgs.length);
+  const all = todo.length ? todo : list.map(c => ({ c, msgs: c.messages.filter(m => m.content && !m.hidden) }));
   const tokens = all.reduce((s, x) => s + x.msgs.reduce((a, m) => a + Brain.msgTokens(m), 0), 0);
   const yuan = Math.max(0.01, tokens * 1.6 / 1e6);
   let optMem = true, optPersona = !S.persona && list.some(c => c.source === 'imported');
   const cb = (get, set, label, sub) => { const i = el('input', { type: 'checkbox' }); i.checked = get(); i.onchange = () => set(i.checked); return el('label', { class: 'imp-item', style: 'padding:10px 0;border:0' }, i, el('div', { class: 'lbl' }, el('div', {}, label), el('small', {}, sub))); };
   const box = el('div', { class: 'dialog' },
-    el('h3', {}, '唤醒记忆'),
+    el('h3', {}, '整理聊天记录'),
     el('p', { html: `读一遍 ${all.length} 段对话（约 ${fmtK(tokens)} tokens），预计花费约 <b>¥${yuan.toFixed(2)}</b>。` }),
-    cb(() => optMem, v => optMem = v, '记住你们的事', '长期记忆、往事回忆、关系档案'),
+    cb(() => optMem, v => optMem = v, '记住你们的事', '整理成记忆摘要和往事回忆'),
     cb(() => optPersona, v => optPersona = v, '还原 TA 的说话方式', '分析 TA 原来的语气和人设'),
     el('p', { style: 'font-size:12px;margin-top:6px' }, '过程中请保持 App 在前台；中途退出下次可以接着整理。'),
     el('div', { class: 'acts' }, el('button', { onclick: () => closeLayer(entry) }, '取消'), el('button', { class: 'primary', onclick: () => { closeLayer(entry); runWake(all, { mem: optMem, persona: optPersona, list }); } }, '开始')));
@@ -1132,12 +1213,14 @@ async function runWake(jobs, { mem, persona, list }) {
       if (fatal) throw fatal;
       if (!ctrl.signal.aborted) {
         if (memories.length > 120) { txt.textContent = '正在合并重复的记忆…'; memories = (await Brain.consolidate(S, memories, { signal: ctrl.signal })).memories; await saveMem(); }
-        txt.textContent = '正在写关系档案…';
+        txt.textContent = '正在写记忆摘要…';
         await refreshProfile(ctrl.signal);
       }
     }
     closeLayer(entry);
     if (!ctrl.signal.aborted) {
+      const wp = pages.find(x => x.querySelector('.wake-head'));
+      if (wp) closePage(wp);
       toast(mem ? `完成：新增 ${memories.length - t0} 条记忆、${episodes.length - e0} 段往事${failed ? `（${failed} 段失败，可再唤醒一次）` : ''}` : '完成', 3500);
       if (persona) await restorePersonaFlow(list);
     } else toast('已停止，下次可以接着整理');
@@ -1146,7 +1229,8 @@ async function runWake(jobs, { mem, persona, list }) {
     toast('出错了：' + e.message, 3500);
   }
   saveSettings();
-  const top = pages[pages.length - 1]; top && top._refresh();
+  pages.forEach(x => x._refresh());
+  renderWelcome();
 }
 
 /* 上下文与压缩 */

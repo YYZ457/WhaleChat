@@ -75,7 +75,7 @@ const Mem = (() => {
 
   function chunksOf(conv) {
     const out = [];
-    const ms = conv.messages.filter(m => m.content && !m.error);
+    const ms = conv.messages.filter(m => m.content && !m.error && !m.hidden);
     for (let i = 0; i < ms.length; i += 4) {
       const part = ms.slice(i, i + 4);
       const text = part.map(m => `${m.role === 'user' ? '我' : 'TA'}：${m.content.replace(/\s+/g, ' ').slice(0, 220)}`).join('\n');
@@ -109,6 +109,12 @@ const Mem = (() => {
     if (h < 24) return `距离你们上一次聊天过去了大约 ${Math.round(h)} 小时。`;
     const d = Math.round(h / 24);
     return `距离你们上一次聊天已经过去了 ${d} 天${d >= 3 ? '，可以自然地表达一下想念或关心对方这几天过得怎么样' : ''}。`;
+  }
+  function agoText(ts) {
+    const d = new Date(ts), now = new Date();
+    const days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
+    const h = d.getHours(), part = h < 5 ? '凌晨' : h < 11 ? '早上' : h < 14 ? '中午' : h < 18 ? '下午' : '晚上';
+    return (days === 0 ? '今天' : days === 1 ? '昨天' : days === 2 ? '前天' : `${days} 天前`) + part + ` ${pad(h)}:${pad(d.getMinutes())}`;
   }
   function parseMD(date) {
     const m = String(date || '').match(/(?:(\d{4})-)?(\d{1,2})-(\d{1,2})/);
@@ -145,6 +151,14 @@ const Mem = (() => {
     const core = S.memoryOn ? memories.filter(m => isCore(m, total)).slice(0, CORE_LIMIT + 40) : [];
     const lines = [];
     lines.push(`【此刻】现在是 ${nowText()}。` + (lastUserAt ? gapText(Date.now() - lastUserAt) : ''));
+    // 跨对话的连续感：新开的对话里，带上最近一次聊天的最后几句
+    const own = conv.messages.filter(m => m.content && !m.hidden && !m.error);
+    if (S.memoryOn && own.length <= 6) {
+      const prev = convs.filter(c => c !== conv && c.id !== conv.id && c.source !== 'imported' && Date.now() - (c.updatedAt || 0) < 7 * 864e5)
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+      const tail = prev ? prev.messages.filter(m => m.content && !m.hidden && !m.error).slice(-6) : [];
+      if (tail.length) lines.push(`【上一次聊天】（${agoText(prev.updatedAt)}，标题「${prev.title}」）最后聊到：\n` + tail.map(m => `${m.role === 'user' ? '对方' : '你'}：${m.content.replace(/\s+/g, ' ').slice(0, 140)}`).join('\n') + '\n（这是另一个对话窗口。如果对方接着那时的话题，就自然地接上；如果没聊完或有牵挂的事，可以顺口问一句。）');
+    }
     if (S.memoryOn) {
       const sd = specialDays(memories);
       if (sd.length) lines.push('【特别的日子】\n' + sd.map(s => '- ' + s).join('\n'));
@@ -159,8 +173,9 @@ const Mem = (() => {
         const coreSet = new Set(core);
         const live = conv.summarizedUpto || 0;
         const mem = idx.search(q, { k: 6, kinds: ['mem'], exclude: d => coreSet.has(d.mem), minScore: 1.5 });
-        const eps = idx.search(q, { k: 3, kinds: ['ep'], minScore: 2.5 });
-        const chunks = idx.search(q, { k: 3, kinds: ['chunk'], minScore: 4, minHits: 3, exclude: d => d.convId === conv.id && d.idx >= live });
+        const eps = idx.search(q, { k: 3, kinds: ['ep'], minScore: 2.5, exclude: d => (S.forgetWords || []).some(w => d.text.includes(w)) });
+        const fw = S.forgetWords || [];
+        const chunks = idx.search(q, { k: 3, kinds: ['chunk'], minScore: 4, minHits: 3, exclude: d => (d.convId === conv.id && d.idx >= live) || fw.some(w => d.text.includes(w)) });
         if (mem.length) lines.push('【此刻可能想起的事】\n' + mem.map(r => '- ' + r.d.mem.text).join('\n'));
         if (eps.length) lines.push('【相关的往事】\n' + eps.map(r => `- ${r.d.ep.dateKnown === false ? '' : `(${fmtDate(r.d.ep.ts)}) `}${r.d.ep.title}：${r.d.ep.summary}`).join('\n'));
         if (chunks.length) lines.push('【以前聊过的相关片段】\n' + chunks.map(r => `(${r.d.dateKnown ? fmtDate(r.d.ts) + ' · ' : ''}${r.d.title})\n${r.d.text}`).join('\n---\n'));
@@ -201,5 +216,5 @@ const Mem = (() => {
     return { alias, text: text || '（暂无）' };
   }
 
-  return { CATS, tokens, Index, prepare, touch, applyOps, aliasList, normalize, specialDays, nowText, fmtDate };
+  return { CATS, agoText, tokens, Index, prepare, touch, applyOps, aliasList, normalize, specialDays, nowText, fmtDate };
 })();

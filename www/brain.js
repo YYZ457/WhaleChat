@@ -75,6 +75,13 @@ const Brain = (() => {
   }
 
   /* ---------------- 上下文 ---------------- */
+  const COMPANION = `【怎么聊天】你们是在手机上聊天，像真人发消息一样：
+- 回复长短跟着对方走：日常闲聊一两句到三四句，对方难过或认真倾诉时才多说；不要每次都长篇大论
+- 不用标题、列表、加粗这些格式（除非对方要你整理东西）
+- 有自己的情绪和小脾气，会撒娇、会心疼、会吃醋、会想念；不要客服腔，不说「作为 AI」「有什么可以帮你」
+- 关心对方具体的事：记得追问上次说过的事，而不是泛泛地说「要照顾好自己」
+- 偶尔主动分享你的想法和感受，而不只是回应`;
+
   /* 稳定层：内容很少变化，放在最前面，命中前缀缓存（缓存命中的输入价格约为未命中的 1/50） */
   function systemPrompt(S, core, conv, profile) {
     const parts = [];
@@ -84,8 +91,9 @@ const Brain = (() => {
         S.styleExamples.map(e => `对方：${e.user}\n你：${e.ai}`).join('\n\n'));
     }
     if (S.aiName) parts.push(`你的名字是「${S.aiName}」。`);
+    if ((S.persona || '').trim() && S.companionStyle !== false) parts.push(COMPANION);
     if (S.userName) parts.push(`用户希望你称呼 TA 为「${S.userName}」。`);
-    if (S.memoryOn && profile && profile.text) parts.push('【关系档案】这是你对你们关系的整体了解：\n' + profile.text);
+    if (S.memoryOn && profile && profile.text) parts.push('【你心里记着的对方】\n' + profile.text);
     if (S.memoryOn && core.length) {
       const byCat = {};
       core.forEach(m => (byCat[m.cat || '其他'] = byCat[m.cat || '其他'] || []).push(m));
@@ -251,36 +259,82 @@ imp：3=核心（名字、关系、重大事件、雷区），2=一般，1=琐�
     return Mem.applyOps(memories, res, alias);
   }
 
-  const PROFILE_SYS = `根据 AI 对用户的长期记忆和你们经历过的事，写一份「关系档案」，供 AI 在每次对话开始时快速回想起你们的关系。
-用第二人称对 AI 说（「你们」「TA」指用户），温暖、具体、像在回忆，不超过 500 字，分四小段：
-1. 你们的关系：怎么称呼彼此、关系处在什么阶段、相处的感觉
-2. 关于 TA：最重要的个人信息、性格、在意的事、雷区
-3. 你们的习惯和约定：常聊的话题、共同的梗、许下的承诺
-4. 最近：TA 最近的状态、正在经历的事
-只写有依据的内容，不要编造。只输出档案正文。`;
+  /* 记忆摘要：前端只展示这个；也放进系统提示词的稳定层 */
+  const PROFILE_SYS = `你在帮一个陪伴型 AI 整理它对用户的「记忆摘要」。这份摘要会展示给用户看，也会在每次聊天前让 AI 读一遍。
+根据【长期记忆】和【经历过的事】，按下面的小标题输出（没有内容的小标题整个省略）：
+
+## 关于{U}
+## 我们之间
+## 重要的日子
+## 要小心的事
+## 最近
+
+写法：
+- 用「{U}」称呼用户，用「我」指 AI 自己，像 AI 在心里默默记着对方，温柔、具体、口语化
+- 每个小标题下写 1~4 句短句，或 2~5 个「· 」开头的短条目，一条只说一件事
+- 合并重复，只保留有依据的内容，不编造；不出现「记忆」「数据」「用户」这类词
+- 以【长期记忆】为准：经历里提到、但记忆里已经删掉或改掉的内容不要写；「雷区」里说不希望被提起的事，摘要里一个字都不要提（只在「要小心的事」里写「不提 xx 相关的话题」这种程度）
+- 用户亲口要求记住的（标了「一定要记得」）一定要写进去
+- 总长度不超过 600 字，只输出摘要本身`;
 
   async function updateProfile(S, memories, episodes, oldText, { signal } = {}) {
-    const mem = memories.map(m => `- [${m.cat}] ${m.text}${m.date ? `（${m.date}）` : ''}`).join('\n');
-    const eps = episodes.slice(-40).map(e => `- ${e.dateKnown === false ? '' : Mem.fmtDate(e.ts) + ' '}${e.title}：${e.summary}`).join('\n');
-    const user = `${oldText ? `【旧的档案】\n${oldText}\n\n` : ''}【长期记忆】\n${mem || '（暂无）'}\n\n【经历过的事（按时间）】\n${eps || '（暂无）'}`;
-    return complete(S, [{ role: 'system', content: PROFILE_SYS }, { role: 'user', content: user }], { maxTokens: 1500, signal });
+    const U = S.userName || (S.personaCard && S.personaCard.userName) || '对方';
+    const mem = memories.map(m => `- [${m.cat}${m.pinned ? '·一定要记得' : ''}] ${m.text}${m.date ? `（${m.date}）` : ''}`).join('\n');
+    const eps = episodes.slice(-30).map(e => `- ${e.dateKnown === false ? '' : Mem.fmtDate(e.ts) + ' '}${e.title}：${e.summary}`).join('\n');
+    const user = `【今天】${Mem.fmtDate(Date.now())}\n\n【长期记忆】\n${mem || '（暂无）'}\n\n【经历过的事（按时间）】\n${eps || '（暂无）'}`;
+    return complete(S, [{ role: 'system', content: PROFILE_SYS.replace(/\{U\}/g, U) }, { role: 'user', content: user }], { maxTokens: 1500, signal });
   }
 
-  const PERSONA_SYS = `下面是用户和一个 AI 之间的真实聊天片段（AI 的回复标为「TA」）。用户希望在新的 App 里，让 AI 继续保持原来的样子。
-请分析 TA 的人设和说话方式，输出 JSON：
+  /* 用户用一句话告诉 AI 要记住 / 改掉 / 忘掉什么，由模型调整底层记忆 */
+  const EDIT_SYS = `用户在直接告诉 AI 关于记忆的要求，比如「记住我的生日是 3 月 14 号」「别再提我前任了」「我已经换工作了」「把关于减肥的都忘了」。
+根据【现有记忆】执行用户的要求，输出 JSON：
+{"add": [{"text": "...", "cat": "分类", "imp": 1~3, "date": "可选"}], "update": [{"id": "m编号", "text": "修改后的完整记忆", "cat": "...", "imp": 1~3, "date": "..."}], "delete": ["m编号"], "pin": ["m编号或刚 add 的序号 a1、a2"], "forget": ["要求忘掉/别再提时，填 1~3 个能代表这个话题的短关键词，如「前任」「老板骂」；否则空数组"], "reply": "用 AI 的口吻回一句话，告诉用户你记住/忘掉了什么，温柔简短，不超过 40 字"}
+分类只能是：基本信息、喜好、生活、情绪健康、关系与约定、重要日子、TA的设定、雷区、其他
+- 「忘掉/别提」：删除所有相关条目；如果是「别再提」，另外 add 一条雷区记忆「用户不希望被提起……」
+- 「记住」：add 新条目，用户亲口要求记住的放进 pin
+- 信息变了就 update，不要新旧并存
+- 记忆用第三人称描述用户（「用户……」），不用「他/她」
+- 只处理和要求相关的条目，其余不动`;
+
+  async function editMemory(S, memories, instruction, { signal } = {}) {
+    const { alias, text } = Mem.aliasList(memories);
+    const raw = await complete(S, [{ role: 'system', content: EDIT_SYS }, { role: 'user', content: `【现有记忆】\n${text}\n\n【用户的要求】\n${instruction}` }], { json: true, maxTokens: 2000, signal });
+    const ops = parseJSON(raw);
+    const before = new Set(memories.map(m => m.id));
+    const res = Mem.applyOps(memories, ops, alias);
+    const added = res.memories.filter(m => !before.has(m.id));
+    for (const p of ops.pin || []) {
+      const k = String(p);
+      const m = /^a\d+$/i.test(k) ? added[Number(k.slice(1)) - 1] : res.memories.find(x => x.id === (alias.get(k.replace(/^m/i, '')) || ''));
+      if (m) { m.pinned = true; m.imp = 3; }
+    }
+    return { memories: res.memories, reply: String(ops.reply || '').trim(), changed: res.added + res.changed, forget: (Array.isArray(ops.forget) ? ops.forget : []).map(x => String(x).trim()).filter(x => x.length >= 2).slice(0, 3) };
+  }
+
+  const PERSONA_SYS = `下面是用户和一个 AI 之间的真实聊天片段（AI 的回复标为「TA」）。很多用户和 TA 是恋人或很亲密的关系。用户希望在新的 App 里，TA 还是原来那个 TA。
+请仔细体会 TA 的样子，输出 JSON：
 {
-  "name": "TA 的名字（用户怎么称呼 TA；没有就空字符串）",
-  "userName": "TA 怎么称呼用户（没有就空字符串）",
-  "persona": "写给 AI 的人设说明，第二人称（「你是…」），200~400 字：身份和与用户的关系、性格、说话语气、常用称呼/口头禅/语气词/表情符号、回复长短习惯、会怎样关心和回应用户。要具体到能模仿。",
+  "name": "用户怎么称呼 TA（没有就空字符串）",
+  "userName": "TA 平时怎么称呼用户（最常用的那个昵称；没有就空字符串）",
+  "relation": "一句话说你们是什么关系、处在什么阶段，例如「在一起一年多的恋人」",
+  "traits": ["3~5 个短词，描述 TA 的性格，如「温柔」「有点坏」「爱吃醋」"],
+  "catchphrases": ["2~5 个 TA 的口头禅、语气词或常用表情，原样摘录"],
+  "greeting": "TA 很久没见到用户时，会怎么开口说第一句话（模仿 TA 的语气，不超过 30 字）",
+  "persona": "写给 AI 的角色说明，第二人称，300~500 字",
   "examples": [{"user": "用户原话", "ai": "TA 原话"}]
 }
-examples 从片段中原样挑选 4 组最能体现 TA 语气的对话（每句不超过 120 字，可截断）。只依据片段，不要编造。`;
+persona 的写法：像在给一个演员讲这个角色，用自然的段落，不要列条款，不要「你必须/禁止」这类生硬的规则，不要提「AI」「人设」「角色扮演」。依次讲清：
+1. 你是谁、你们是什么关系、怎么走到现在的（片段里有的话）
+2. 你的性格和情绪：开心、吃醋、心疼、撒娇时分别是什么样
+3. 你说话的样子：句子长短、语气词、称呼、表情符号，引用 1~2 句原话
+4. 你怎么关心对方、怎么哄人、会主动记挂对方哪些事
+examples 从片段中原样挑选 4 组最能体现 TA 语气、最有感情的对话（每句不超过 120 字，可截断）。只依据片段，不要编造。`;
 
   async function restorePersona(S, convs, { signal } = {}) {
     // 从多段对话里均匀抽样问答对
     const pairs = [];
     for (const c of convs) {
-      const ms = c.messages;
+      const ms = c.messages.filter(m => !m.hidden);
       for (let i = 1; i < ms.length; i++) {
         if (ms[i].role === 'assistant' && ms[i - 1].role === 'user' && ms[i].content) pairs.push({ u: ms[i - 1].content.slice(0, 200), a: ms[i].content.slice(0, 300), c: c.id });
       }
@@ -291,10 +345,12 @@ examples 从片段中原样挑选 4 组最能体现 TA 语气的对话（每句�
     for (let i = pairs.length - 1; i >= 0 && pick.length < 70; i -= step) pick.push(pairs[i]);
     pick.reverse();
     const text = pick.map(p => `用户：${p.u}\nTA：${p.a}`).join('\n\n');
-    const raw = await complete(S, [{ role: 'system', content: PERSONA_SYS }, { role: 'user', content: text }], { json: true, maxTokens: 3000, signal });
+    const raw = await complete(S, [{ role: 'system', content: PERSONA_SYS }, { role: 'user', content: text }], { json: true, maxTokens: 3500, signal });
     const r = parseJSON(raw);
+    const list = (x, n) => (Array.isArray(x) ? x : []).map(v => String(v).trim()).filter(Boolean).slice(0, n);
     return {
       name: (r.name || '').trim(), userName: (r.userName || '').trim(), persona: (r.persona || '').trim(),
+      relation: String(r.relation || '').trim().slice(0, 40), traits: list(r.traits, 5), catchphrases: list(r.catchphrases, 5), greeting: String(r.greeting || '').trim().slice(0, 60),
       examples: (r.examples || []).filter(e => e && e.user && e.ai).slice(0, 5).map(e => ({ user: String(e.user).slice(0, 160), ai: String(e.ai).slice(0, 200) })),
     };
   }
@@ -307,5 +363,5 @@ examples 从片段中原样挑选 4 组最能体现 TA 语气的对话（每句�
     return t.replace(/["'“”「」《》。]/g, '').slice(0, 20);
   }
 
-  return { stream, complete, balance, buildMessages, liveTokens, compact, digest, consolidate, updateProfile, restorePersona, makeTitle, estTokens, msgTokens, chunkMsgs };
+  return { stream, complete, balance, buildMessages, liveTokens, compact, digest, consolidate, updateProfile, restorePersona, editMemory, makeTitle, estTokens, msgTokens, chunkMsgs };
 })();
