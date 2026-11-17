@@ -123,7 +123,7 @@ class WebExportActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.WHITE
 
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE); fitsSystemWindows = true }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE) }
 
         // 顶栏
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(px(6), px(6), px(10), px(6)) }
@@ -154,6 +154,7 @@ class WebExportActivity : Activity() {
         st.loadWithOverviewMode = true
         st.useWideViewPort = true
         st.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        st.textZoom = (resources.configuration.fontScale * 100).toInt().coerceIn(85, 115)
         applyUa()
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
@@ -195,6 +196,13 @@ class WebExportActivity : Activity() {
         val frame = FrameLayout(this).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f) }
         frame.addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(top); root.addView(tip); root.addView(bar); root.addView(frame)
+        // 全面屏（Android 15+ 强制）下自己让开状态栏、导航栏、挖孔和键盘
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+            v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+            androidx.core.view.WindowInsetsCompat.CONSUMED
+        }
         setContentView(root)
         showTip("① 先登录你原来的 DeepSeek 账号\n② 登录后点左下角头像 → 设置 → 数据管理 → 导出所有历史对话\n③ 下载会被鲸语自动接住，不用去找文件", false)
         web.loadUrl(START_URL)

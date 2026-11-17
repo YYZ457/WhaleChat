@@ -190,11 +190,16 @@ function applyTheme() {
   const dark = S.theme === 'dark' || (S.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   try { P.SystemBars && P.SystemBars.setStyle({ style: dark ? 'DARK' : 'LIGHT' }); } catch (e) {}
 }
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+{ const mq = matchMedia('(prefers-color-scheme: dark)'); mq.addEventListener ? mq.addEventListener('change', applyTheme) : mq.addListener(applyTheme); }
 
 /* ---------------- 侧边栏 ---------------- */
 const app = $('#app');
 function openSide() { renderList(); app.classList.add('side-open'); }
+// 宽屏（平板、折叠屏展开）侧边栏常驻
+const wideMQ = matchMedia('(min-width: 840px)');
+wideMQ.addEventListener ? wideMQ.addEventListener('change', () => renderList()) : wideMQ.addListener(() => renderList());
+// 「回到底部」按钮跟随输入框高度，避免大字体/附件时被挡住
+if (window.ResizeObserver) new ResizeObserver(() => { document.documentElement.style.setProperty('--cw', $('#composerWrap').offsetHeight + 'px'); }).observe($('#composerWrap'));
 function closeSide() { app.classList.remove('side-open'); }
 $('#menuBtn').onclick = openSide;
 $('#mainMask').onclick = closeSide;
@@ -301,6 +306,7 @@ $('#sideName').onclick = () => openSettings();
 const scroller = $('#scroller');
 const msgBox = $('#messages');
 function renderHeader() {
+  if (wideMQ.matches) renderList();
   $('#chatTitle').innerHTML = cur ? esc(cur.title) : '';
   $('#ttsBtn').innerHTML = S.ttsAuto ? I.sound : I.muted;
 }
@@ -851,7 +857,7 @@ function openSettings() {
       el('div', { class: 'group' }, row(I.speak.replace(/18/g, '24'), '朗读音色', null, openVoicePage)),
       secTitle('关于'),
       el('div', { class: 'group' },
-        row(I.info, '版本', '1.3.1', null),
+        row(I.info, '版本', '1.3.2', null),
         row(I.help, '使用说明', null, openHelpPage)),
     );
   });

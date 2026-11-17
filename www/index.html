@@ -98,6 +98,25 @@
 <div id="layer"></div>
 <div id="toast"></div>
 
+<script>
+/* 旧版系统 WebView 兼容：补几个新方法；版本过旧时提示更新 */
+(function () {
+  function def(o, k, f) { if (!o[k]) Object.defineProperty(o, k, { value: f, writable: true, configurable: true }); }
+  function at(i) { i = Math.trunc(i) || 0; if (i < 0) i += this.length; return this[i]; }
+  def(Array.prototype, 'at', at); def(String.prototype, 'at', at);
+  def(Object, 'hasOwn', function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); });
+  def(Array.prototype, 'findLast', function (f) { for (var i = this.length - 1; i >= 0; i--) if (f(this[i], i, this)) return this[i]; });
+  def(String.prototype, 'replaceAll', function (a, b) { return typeof a === 'string' ? this.split(a).join(b) : this.replace(a, b); });
+  var m = navigator.userAgent.match(/Chrome\/(\d+)/);
+  window.__oldWebView = m && +m[1] < 80;
+  if (window.__oldWebView) document.addEventListener('DOMContentLoaded', function () {
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:0;right:0;top:0;bottom:0;z-index:9999;background:#fff;color:#222;padding:80px 28px;font-size:16px;line-height:1.8';
+    d.innerHTML = '<b style="font-size:20px">需要更新系统组件</b><br><br>你的手机里「Android System WebView」版本太旧（' + m[1] + '），鲸语无法正常显示。<br><br>请到应用商店搜索「Android System WebView」或「Chrome」并更新，然后重新打开鲸语。';
+    document.body.appendChild(d);
+  });
+})();
+</script>
 <script src="vendor/marked.umd.js"></script>
 <script src="vendor/purify.min.js"></script>
 <script src="vendor/jszip.min.js"></script>

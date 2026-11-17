@@ -31,6 +31,8 @@
   --fs: 16px;
   --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
   --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --sal: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --sar: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -111,7 +113,7 @@ svg { display: block; }
 .hidden { display: none !important; }
 
 /* ---------- layout ---------- */
-#app { position: fixed; inset: 0; overflow: hidden; }
+#app { position: fixed; top: 0; right: 0; bottom: 0; left: 0; overflow: hidden; }
 #sidebar {
   position: absolute; top: 0; bottom: 0; left: 0; width: 78vw; max-width: 340px;
   background: var(--bg-side);
@@ -119,7 +121,7 @@ svg { display: block; }
   padding: calc(var(--sat) + 12px) 0 calc(var(--sab) + 8px);
 }
 #main {
-  position: absolute; inset: 0; background: var(--bg);
+  position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: var(--bg);
   display: flex; flex-direction: column;
   transition: transform .28s cubic-bezier(.2, .8, .2, 1), border-radius .28s;
   z-index: 2;
@@ -129,7 +131,7 @@ svg { display: block; }
   border-radius: 28px; overflow: hidden;
   box-shadow: -2px 0 24px rgba(0,0,0,.12);
 }
-#mainMask { position: absolute; inset: 0; z-index: 50; display: none; }
+#mainMask { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 50; display: none; }
 #app.side-open #mainMask { display: block; }
 
 /* ---------- header ---------- */
@@ -234,7 +236,7 @@ sup.cite {
 .msg-actions { display: flex; gap: 2px; margin-top: 6px; color: var(--fg3); }
 .msg-actions button { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; }
 .msg-actions button:active { background: var(--chip-off-bg); }
-.msg-error { color: var(--danger); font-size: 14px; background: color-mix(in srgb, var(--danger) 10%, transparent); padding: 8px 12px; border-radius: 10px; }
+.msg-error { color: var(--danger); font-size: 14px; background: rgba(229,72,77,.1); background: color-mix(in srgb, var(--danger) 10%, transparent); padding: 8px 12px; border-radius: 10px; }
 .cursor::after { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); margin-left: 4px; animation: blink 1s infinite; vertical-align: middle; }
 @keyframes blink { 50% { opacity: .2; } }
 .divider {
@@ -315,12 +317,12 @@ sup.cite {
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .side-foot .name { flex: 1; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty-list { color: var(--fg3); text-align: center; padding: 40px 20px; font-size: 14px; line-height: 1.8; }
-mark { background: color-mix(in srgb, var(--blue) 30%, transparent); color: inherit; border-radius: 3px; }
+mark { background: rgba(77,107,254,.3); background: color-mix(in srgb, var(--blue) 30%, transparent); color: inherit; border-radius: 3px; }
 .snippet { font-size: 12px; color: var(--fg3); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 /* ---------- pages (settings etc.) ---------- */
 .page {
-  position: fixed; inset: 0; z-index: 100; background: var(--page-bg);
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 100; background: var(--page-bg);
   display: flex; flex-direction: column; transform: translateX(100%);
   transition: transform .26s cubic-bezier(.2, .8, .2, 1);
 }
@@ -338,12 +340,12 @@ mark { background: color-mix(in srgb, var(--blue) 30%, transparent); color: inhe
 .row {
   display: flex; align-items: center; gap: 14px; min-height: 58px; padding: 0 18px; width: 100%; text-align: left; font-size: 17px;
 }
-.row .lbl { flex: 1; min-width: 0; }
+.row .lbl { flex: 1; min-width: 4.5em; }
 .row .lbl small { display: block; font-size: 12px; color: var(--fg3); margin-top: 2px; line-height: 1.4; }
-.row .val { color: var(--fg2); font-size: 15px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .val { color: var(--fg2); font-size: 15px; max-width: 45%; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .chev { color: var(--fg3); flex: none; }
 .row.danger { color: var(--danger); }
-.row:active:not(.static) { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.row:active:not(.static) { background: rgba(128,128,128,.1); background: color-mix(in srgb, var(--fg) 5%, transparent); }
 .field { padding: 12px 18px; border-bottom: 1px solid var(--line); }
 .field:last-child { border-bottom: 0; }
 .field label { display: block; font-size: 13px; color: var(--fg2); margin-bottom: 6px; }
@@ -361,7 +363,7 @@ mark { background: color-mix(in srgb, var(--blue) 30%, transparent); color: inhe
 .btn:disabled { opacity: .5; }
 .switch { position: relative; width: 50px; height: 30px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
-.switch span { position: absolute; inset: 0; border-radius: 15px; background: var(--chip-off-border); transition: .2s; }
+.switch span { position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 15px; background: var(--chip-off-border); transition: .2s; }
 .switch span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 .switch input:checked + span { background: var(--blue); }
 .switch input:checked + span::after { transform: translateX(20px); }
@@ -384,7 +386,7 @@ mark { background: color-mix(in srgb, var(--blue) 30%, transparent); color: inhe
 .summary-box { white-space: pre-wrap; line-height: 1.7; font-size: 15px; padding: 16px 18px; }
 
 /* ---------- sheets / dialogs / toast ---------- */
-.mask { position: fixed; inset: 0; background: var(--mask); z-index: 200; opacity: 0; transition: opacity .2s; }
+.mask { position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: var(--mask); z-index: 200; opacity: 0; transition: opacity .2s; }
 .mask.show { opacity: 1; }
 .sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 201; background: var(--page-bg);
@@ -416,7 +418,7 @@ mark { background: color-mix(in srgb, var(--blue) 30%, transparent); color: inhe
 
 #main { position: absolute; }
 #toBottomBtn {
-  position: absolute; right: 18px; bottom: 150px; z-index: 5; width: 40px; height: 40px; border-radius: 50%;
+  position: absolute; right: calc(18px + var(--sar)); bottom: calc(var(--cw, 140px) + 10px); z-index: 5; width: 40px; height: 40px; border-radius: 50%;
   background: var(--card); border: 1px solid var(--card-border); box-shadow: 0 4px 14px rgba(0,0,0,.1); display: grid; place-items: center; color: var(--fg);
 }
 .disclaimer { text-align: center; font-size: 11px; color: var(--fg3); margin: 6px 0 0; opacity: .8; }
@@ -433,3 +435,38 @@ mark { background: color-mix(in srgb, var(--blue) 30%, transparent); color: inhe
 .badge { font-size: 11px; font-weight: 600; color: #fff; background: var(--blue); border-radius: 8px; padding: 1px 7px; }
 .dialog input[type=checkbox] { width: 20px; height: 20px; padding: 0; flex: none; accent-color: var(--blue); }
 .dialog .imp-item { text-align: left; }
+
+/* ---------- 多机型适配 ---------- */
+#main { padding-left: var(--sal); padding-right: var(--sar); }
+#sidebar { padding-left: var(--sal); }
+.page { padding-left: var(--sal); padding-right: var(--sar); }
+.sheet { padding-left: calc(12px + var(--sal)); padding-right: calc(12px + var(--sar)); }
+.dialog { max-height: calc(100% - 48px - var(--sat) - var(--sab)); overflow-y: auto; }
+/* 平板、折叠屏展开、横屏：内容居中限宽，底部弹层不铺满 */
+.page-body { padding-left: max(16px, calc((100% - 720px) / 2)); padding-right: max(16px, calc((100% - 720px) / 2)); }
+@media (min-width: 600px) {
+  .sheet { left: 50%; right: auto; width: 560px; margin-left: -280px; border-radius: 22px 22px 0 0; }
+  .dialog { width: 400px; }
+}
+/* 宽屏：侧边栏常驻 */
+@media (min-width: 840px) {
+  #sidebar { width: 300px; max-width: none; border-right: 1px solid var(--line); }
+  #main { left: 300px; }
+  #app.side-open #main { transform: none; border-radius: 0; box-shadow: none; }
+  #app.side-open #mainMask { display: none; }
+  #menuBtn { visibility: hidden; width: 8px; }
+}
+/* 矮屏（手机横屏、分屏）：压缩输入框和欢迎区 */
+@media (max-height: 520px) {
+  #input { max-height: 30vh; min-height: 32px; }
+  #welcome { gap: 8px; padding-bottom: 0; }
+  #welcomeLogo { transform: scale(.7); }
+  .topbar { min-height: 46px; padding-top: calc(var(--sat) + 2px); padding-bottom: 2px; }
+  .disclaimer { display: none; }
+}
+/* 很窄的屏幕（小屏机、分屏） */
+@media (max-width: 340px) {
+  #messages { padding-left: 12px; padding-right: 12px; }
+  #composerWrap { padding-left: 8px; padding-right: 8px; }
+  #welcome h1 { font-size: 18px; }
+}
