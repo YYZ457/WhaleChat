@@ -60,7 +60,7 @@ const DEFAULTS = {
   effort: 'high', temperature: 1.3, maxTokens: '',
   deepThink: false, webSearch: false, theme: 'system', fontSize: 16,
   userName: '', aiName: '', persona: '', avatar: '',
-  memoryOn: true, autoMemory: true, memEvery: 8, recallOn: true, styleExamples: [], lastUserAt: 0, memSinceProfile: 0,
+  memoryOn: false, autoMemory: true, memEvery: 8, recallOn: true, styleExamples: [], lastUserAt: 0, memSinceProfile: 0,
   autoCompact: true, compactAt: 64000, keepRecent: 16,
   ttsAuto: false, ttsVoice: '', ttsRate: 1,
   onboarded: false,
@@ -276,7 +276,7 @@ function convMenu(c) {
     { label: '查看 / 编辑上下文回顾', action: () => openSummaryPage(c) },
     { label: '整理这段对话的记忆', action: () => wakeFlow([c]) },
     { label: '删除', danger: true, action: async () => {
-      if (await dialog({ title: '删除对话', text: '删除后无法恢复（已提取的长期记忆会保留）', ok: '删除', danger: true })) {
+      if (await dialog({ title: '删除对话', text: '删除后无法恢复（TA 记住的事会保留）', ok: '删除', danger: true })) {
         await DB.delConv(c.id); convs = convs.filter(x => x.id !== c.id);
         if (cur && cur.id === c.id) newChat(); renderList();
       } } },
@@ -289,7 +289,7 @@ function manageAll() {
   ]);
 }
 async function clearAllConvs() {
-  if (!await dialog({ title: '删除全部对话？', text: '所有对话都会被删除且无法恢复。<br>长期记忆和设置会保留。', ok: '全部删除', danger: true })) return;
+  if (!await dialog({ title: '删除全部对话？', text: '所有对话都会被删除且无法恢复。<br>记忆和设置会保留。', ok: '全部删除', danger: true })) return;
   await DB.clearConvs(); convs = []; newChat(); renderList(); toast('已删除');
 }
 
@@ -319,10 +319,18 @@ function renderWelcome() {
     $('#welcomeText').textContent = companion ? `${timeGreet()}${S.userName ? '，' + S.userName : ''}` : convs.length ? '欢迎回来，想从哪里开始？' : '你好，我能帮什么忙吗？';
     const acts = $('#welcomeActs'); acts.innerHTML = '';
     if (companion && S.apiKey) acts.append(el('button', { class: 'w-act primary', onclick: greet }, `让${S.aiName || 'TA'}先开口`));
+    if (!S.memoryOn && !S.memIntroSeen && S.apiKey) acts.append(el('div', { class: 'w-intro' },
+      el('b', {}, '新功能：记忆'),
+      el('p', {}, `开启后，${S.aiName || 'TA'}能记住你说过的事，换个对话也不会忘，还能找回原来的说话方式。原版 App 没有这个功能，所以默认是关着的。`),
+      el('div', { class: 'w-intro-acts' },
+        el('button', { onclick: () => { S.memIntroSeen = true; saveSettings(); renderWelcome(); } }, '不用了'),
+        el('button', { class: 'on', onclick: () => { enableMemory(); renderWelcome(); openMemoryPage(); } }, '开启记忆'))));
     const pend = pendingConvs().filter(c => c.source === 'imported');
     if (S.memoryOn && pend.length) acts.append(el('button', { class: 'w-act', onclick: openWakePage }, `还有 ${pend.length} 段导入的对话没整理成记忆，继续整理`));
   }
 }
+/* 记忆默认关闭（和原版 App 一样，对话之间互不相通）；在这里统一开启 */
+function enableMemory() { S.memoryOn = true; S.autoMemory = true; S.recallOn = true; S.memIntroSeen = true; saveSettings(); }
 function timeGreet() {
   const h = new Date().getHours();
   return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 14 ? '中午好' : h < 18 ? '下午好' : h < 23 ? '晚上好' : '夜深了';
@@ -877,7 +885,7 @@ function openSettings() {
       el('div', { class: 'group' }, row(I.speak.replace(/18/g, '24'), '朗读音色', null, openVoicePage)),
       secTitle('关于'),
       el('div', { class: 'group' },
-        row(I.info, '版本', '1.4', null),
+        row(I.info, '版本', '1.4.1', null),
         row(I.help, '使用说明', null, openHelpPage)),
     );
   });
@@ -1052,6 +1060,21 @@ function openMemoryPage() {
   const pg = page('记忆', body => {
     const pend = pendingConvs();
     const ai = S.aiName || 'TA';
+    if (!S.memoryOn) {
+      body.append(el('div', { class: 'mem-off' },
+        el('div', { class: 'mem-off-ic', html: I.heart }),
+        el('b', {}, '记忆还没有开启'),
+        el('p', {}, '现在和原版 DeepSeek App 一样：每个对话互不相通，换个对话 TA 就不记得了。'),
+        el('p', {}, `开启后，${ai}会：`),
+        el('div', { class: 'mem-off-list' },
+          el('div', {}, '记住你说过的事，换个对话也不会忘'),
+          el('div', {}, '记得生日、纪念日，知道你们多久没聊了'),
+          el('div', {}, '聊到相关话题时，自然地想起以前的事'),
+          el('div', {}, '记住什么、忘掉什么，你一句话说了算')),
+        el('p', { class: 'mem-off-note' }, '记忆只保存在你的手机上。整理记忆会调用几次接口，费用很低，开始前会告诉你预计花多少。'),
+        el('button', { class: 'btn', onclick: () => { enableMemory(); pg._refresh(); renderWelcome(); } }, '开启记忆')));
+      return;
+    }
     // 进度：还有对话没整理
     if (S.memoryOn && pend.length) body.append(el('button', { class: 'mem-banner', onclick: openWakePage },
       el('div', {}, el('b', {}, `还有 ${pend.length} 段对话没整理`), el('small', {}, `整理后${ai}会记得里面的事`)), el('span', { class: 'go' }, '继续整理')));
@@ -1102,7 +1125,7 @@ function openMemoryPage() {
         row(I.data, '整理聊天记录', pend.length ? `${pend.length} 段待整理` : '都整理好了', openWakePage)),
       secTitle('设置'),
       el('div', { class: 'group' },
-        switchRow('启用记忆', null, () => S.memoryOn, v => { S.memoryOn = v; saveSettings(); }),
+        switchRow('启用记忆', '关闭后和原版一样，对话之间互不相通', () => S.memoryOn, v => { if (v) enableMemory(); else { S.memoryOn = false; saveSettings(); } pg._refresh(); renderWelcome(); }),
         switchRow('聊天时自动记住', '聊几句就自动记下值得记住的事', () => S.autoMemory, v => { S.autoMemory = v; saveSettings(); }),
         switchRow('想起以前聊过的事', '聊到相关话题时自动想起来（在手机上检索，不额外花钱）', () => S.recallOn !== false, v => { S.recallOn = v; saveSettings(); })),
       memories.length || episodes.length ? el('button', { class: 'btn ghost', style: 'color:var(--danger)', onclick: async () => { if (await dialog({ title: '清空全部记忆？', text: `${ai}会忘掉记住的所有事和往事回忆`, ok: '清空', danger: true })) { memories = []; episodes = []; profile = { text: '', ts: 0 }; convs.forEach(c => { c.memCursor = 0; }); await DB.putConvs(convs); saveMem(); saveEpisodes(); saveProfile(); pg._refresh(); } } }, '清空全部记忆') : null);
@@ -1314,14 +1337,14 @@ function openHelpPage() {
 <b>2. 找回原来的聊天记录</b>
 设置 → 数据管理 → 导入聊天记录。导入的对话可以直接点开<b>继续聊</b>，TA 会带着完整的上下文回复你。
 
-<b>3. 让 TA 记得你</b>
-导入时勾选「提取长期记忆」，或到 设置 → 长期记忆 → 从全部对话中整理记忆。之后无论开多少个新对话，TA 都记得你们之间的事。
+<b>3. 记忆（默认关闭）</b>
+和原版 App 一样，默认每个对话互不相通。到 设置 → 记忆 开启后，TA 会记住你说过的事，换个对话也不会忘。导入的对话可以在那里「整理聊天记录」。想让 TA 记住、修改或忘掉什么，在记忆页直接用一句话告诉 TA。
 
 <b>4. 很长的对话</b>
 超过设定长度后，App 会自动把早期内容整理成「回顾」，最近的消息原样保留。回顾可以在对话列表 ··· 菜单里查看和修改。
 
-<b>5. 人设</b>
-设置 → 个性化，可以写下 TA 的名字、性格、你们的关系，让 TA 一直是原来的样子。
+<b>5. TA 的样子</b>
+设置 → 个性化，可以从聊天记录还原 TA 的样子，也可以自己写。设定了 TA 以后，首页可以让 TA 先开口。
 
 <b>6. 数据安全</b>
 所有聊天、记忆和 Key 只存在你手机本地，只会发送给你填写的 API 地址。记得定期在「数据管理」里导出备份。` }));
@@ -1354,7 +1377,7 @@ function openImportPage() {
       el('div', { class: 'imp-ico', html: icon }),
       el('div', { class: 'lbl' }, el('div', { class: 'imp-t' }, title, badge ? el('span', { class: 'badge' }, badge) : null), el('div', { class: 'imp-s', html: sub })),
       el('span', { html: I.chev }));
-    body.append(el('div', { class: 'note' }, '导入后的对话可以直接点开接着聊，TA 还会记住你们的事、找回原来的说话方式。'), el('div', { style: 'height:12px' }));
+    body.append(el('div', { class: 'note' }, '导入后的对话可以直接点开接着聊。开启记忆后，TA 还会记住你们的事、找回原来的说话方式。'), el('div', { style: 'height:12px' }));
     if (DSI) {
       body.append(opt(I.globe, '登录网页版，一键导出', '在鲸语里登录原来的 DeepSeek 账号，点「导出所有历史对话」，<b>全部对话</b>会自动导进来', '推荐', webExportFlow));
     } else {
@@ -1405,7 +1428,7 @@ function previewImport(list) {
   list.sort((a, b) => b.updatedAt - a.updatedAt);
   const existing = new Set(convs.map(c => c.origId).filter(Boolean));
   const picked = new Set(list.map((c, i) => i).filter(i => !existing.has(list[i].origId)));
-  let doMem = true;
+  let doMem = !!S.memoryOn;
   let pq = '';
   const pg = page(`选择要导入的对话`, body => {
     const all = el('input', { type: 'checkbox' }); all.checked = picked.size === list.length;
@@ -1427,14 +1450,16 @@ function previewImport(list) {
       await DB.putConvs(made); convs = convs.concat(made);
       closePage(pg); toast(`已导入 ${made.length} 段对话`, 2500);
       renderList(); renderWelcome();
+      if (doMem) enableMemory();
       if (doMem && S.apiKey) wakeFlow(made);
-      else if (doMem) toast('设置好 API Key 后，可在「长期记忆」里唤醒记忆', 3500);
+      else if (doMem) toast('设置好 API Key 后，可以在「设置 → 记忆」里整理这些对话', 3500);
     };
     body.append(
       el('div', { style: 'height:8px' }),
       el('div', { class: 'group' },
         el('label', { class: 'row' }, el('span', { class: 'lbl' }, `全选（共 ${list.length} 段）`), all),
-        switchRow('导入后唤醒记忆', '让 TA 记得你们的过去，并还原 TA 原来的说话方式', () => doMem, v => { doMem = v; })),
+        S.memoryOn ? switchRow('导入后整理记忆', '让 TA 记得你们的过去，并还原 TA 原来的说话方式', () => doMem, v => { doMem = v; })
+          : switchRow('开启记忆，让 TA 记住这些对话', '原版 App 没有这个功能，所以默认关闭。开启后 TA 会记得你们的过去，还能找回原来的说话方式', () => doMem, v => { doMem = v; })),
       btn, el('div', { style: 'height:14px' }),
       list.length > 12 ? (() => { const q = el('input', { type: 'search', placeholder: `在 ${list.length} 段对话中搜索标题…`, style: 'width:100%;border:0;outline:none;background:var(--group);border-radius:14px;height:44px;padding:0 16px;font-size:15px;margin-bottom:10px;color:var(--fg)' }); q.value = pq; q.oninput = () => { pq = q.value.trim().toLowerCase(); const st = document.activeElement === q; pg._refresh(); if (st) { const n = pg.querySelector('input[type=search]'); n && (n.focus(), n.setSelectionRange(n.value.length, n.value.length)); } }; return q; })() : null,
       g);
@@ -1572,10 +1597,10 @@ async function checkDsPending() {
     const n = made.reduce((a, c) => a + c.messages.length, 0);
     const want = await dialog({
       title: made.length > 1 ? `已导入 ${made.length} 段对话` : '导入成功',
-      text: `${made.length > 1 ? '' : `「${esc(made[0].title)}」<br>`}共 ${n} 条消息，可以直接接着聊了。<br><br>要不要「唤醒记忆」？TA 会记住你们的事，并找回原来的说话方式。`,
-      ok: '唤醒记忆', cancel: '以后再说',
+      text: `${made.length > 1 ? '' : `「${esc(made[0].title)}」<br>`}共 ${n} 条消息，可以直接接着聊了。<br><br>` + (S.memoryOn ? '要不要整理成记忆？TA 会记住你们的事，并找回原来的说话方式。' : '要不要开启「记忆」？原版 App 没有这个功能。开启后 TA 会记住这些对话里的事，并找回原来的说话方式。'),
+      ok: S.memoryOn ? '整理记忆' : '开启记忆', cancel: '以后再说',
     });
-    if (want) wakeFlow(made);
+    if (want) { enableMemory(); wakeFlow(made); }
   } catch (e) { toast('导入失败：' + e.message, 3500); }
   finally { dsImporting = false; }
 }

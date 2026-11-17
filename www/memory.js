@@ -150,7 +150,7 @@ const Mem = (() => {
     const total = memories.length;
     const core = S.memoryOn ? memories.filter(m => isCore(m, total)).slice(0, CORE_LIMIT + 40) : [];
     const lines = [];
-    lines.push(`【此刻】现在是 ${nowText()}。` + (lastUserAt ? gapText(Date.now() - lastUserAt) : ''));
+    lines.push(`【此刻】现在是 ${nowText()}。` + (lastUserAt && (S.memoryOn || (S.persona || '').trim()) ? gapText(Date.now() - lastUserAt) : ''));
     // 跨对话的连续感：新开的对话里，带上最近一次聊天的最后几句
     const own = conv.messages.filter(m => m.content && !m.hidden && !m.error);
     if (S.memoryOn && own.length <= 6) {
