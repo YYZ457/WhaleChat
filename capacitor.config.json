@@ -1,0 +1,7 @@
+{
+  "appId": "app.whalechat.companion",
+  "appName": "鲸语",
+  "webDir": "www",
+  "android": { "allowMixedContent": false },
+  "plugins": { "SystemBars": { "insetsHandling": "css", "initialViewportFitValueHint": "cover" } }
+}

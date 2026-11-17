@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">鲸语</string>
+    <string name="title_activity_main">鲸语</string>
+    <string name="package_name">app.whalechat.companion</string>
+    <string name="custom_url_scheme">app.whalechat.companion</string>
+    <string name="ds_export_label">鲸语导出助手</string>
+    <string name="ds_export_summary">把 DeepSeek App 里的聊天记录导入鲸语</string>
+    <string name="ds_export_desc">开启后，在鲸语里点「开始导入」，DeepSeek App 上会出现一个导出面板。点「导出这段对话」后，助手会自动上下滑动，逐屏读取这段对话的文字，并保存到鲸语。\n\n· 只读取 DeepSeek App（com.deepseek.chat）的聊天内容，不读取其他任何 App\n· 只在你点「导出」时工作\n· 读到的内容只保存在这台手机上，不会上传\n\n导入完成后可以随时在这里关闭。</string>
+</resources>
